@@ -43,8 +43,8 @@ class DeliberateStage(BaseStage):
             platform_context=extra.get("platform_context", ""),
         )
         if not llm_response:
-            # LLM 调用失败或无返回：中止并重调度。
-            ctx.abort("llm_failed")
+            # 模型选择沉默、输出无效或请求失败：跳过发送和存档，按原间隔重调度。
+            ctx.abort("no_sendable_response")
             return StageResult.RESCHEDULE
 
         response_text = plugin.llm_service.extract_response_text(llm_response)

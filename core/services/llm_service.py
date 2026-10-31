@@ -9,10 +9,12 @@ import asyncio
 from typing import Any
 
 from astrbot.api import logger
+from astrbot.api.message_components import Plain
 
 from ...utils.time_utils import format_current_time
 from ..adapters.astrbot_event import dispatch_event_hook
 from ..adapters.astrbot_provider import build_provider_request, invoke_provider
+from ..domain.proactive_decision import DECISION_INSTRUCTION, parse_decision
 
 try:  # pragma: no cover - 取决于 AstrBot 版本
     from astrbot.core.star.star_handler import EventType
@@ -189,6 +191,11 @@ class LlmService:
             logger.info("[主动消息] LLM 前置钩子终止了事件传播，放弃本次请求喵。")
             return None, final_user_simulation_prompt
 
+        # 在人格与记忆钩子完成后添加格式协议，不写入持久化的用户提示词。
+        req.system_prompt = (
+            f"{getattr(req, 'system_prompt', '') or ''}\n\n{DECISION_INSTRUCTION}"
+        ).strip()
+
         llm_response_obj = None
         try:
             llm_response_obj = await invoke_provider(provider, req)
@@ -225,6 +232,20 @@ class LlmService:
             logger.warning("[主动消息] LLM 返回空响应，重新调度喵。")
             return None, final_user_simulation_prompt
 
+        # 先解析发送决定，再调用记忆与响应钩子，避免存入 JSON 或沉默占位内容。
+        try:
+            decision = parse_decision(self.extract_response_text(llm_response_obj))
+        except ValueError as error:
+            logger.warning(f"[主动消息] 输出协议校验失败，跳过发送: {error}")
+            return None, final_user_simulation_prompt
+        if not decision.send:
+            logger.info("[主动消息] 模型选择不发送，等待下一次调度。")
+            return None, final_user_simulation_prompt
+
+        # 原始消息链可能含 JSON 文本；后续钩子和投递仅接收已确认的正文。
+        llm_response_obj.result_chain = None
+        llm_response_obj.completion_text = decision.message
+
         response_stopped = False
         try:
             response_stopped = await self.dispatch_llm_response_hooks(
@@ -239,7 +260,7 @@ class LlmService:
 
         response_text = self.extract_response_text(llm_response_obj)
         if not response_text:
-            if getattr(llm_response_obj, "result_chain", None):
+            if self.extract_response_chain(llm_response_obj):
                 logger.info("[主动消息] 生成结果无文本但有消息链，继续后续流程喵。")
                 return llm_response_obj, self.resolve_final_user_prompt(
                     req, final_user_simulation_prompt
@@ -321,6 +342,11 @@ class LlmService:
         if chain is None:
             return []
         try:
-            return [comp for comp in chain if comp is not None]
+            return [
+                comp
+                for comp in chain
+                if comp is not None
+                and (not isinstance(comp, Plain) or (comp.text or "").strip())
+            ]
         except Exception:
             return []
