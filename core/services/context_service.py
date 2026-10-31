@@ -682,12 +682,14 @@ class ContextService:
 
             # 优先使用会话绑定的人格，其次回退到默认人格。
             original_system_prompt = ""
+            begin_dialogs: list[str] = []
             if conversation and conversation.persona_id:
                 persona = await plugin.context.persona_manager.get_persona(
                     conversation.persona_id
                 )
                 if persona:
                     original_system_prompt = persona.system_prompt
+                    begin_dialogs = persona.begin_dialogs or []
                     logger.info(
                         f"[主动消息] 使用会话人格: '{conversation.persona_id}' 喵"
                     )
@@ -700,6 +702,7 @@ class ContextService:
                 )
                 if default_persona:
                     original_system_prompt = default_persona["prompt"]
+                    begin_dialogs = default_persona.get("begin_dialogs") or []
                     logger.info("[主动消息] 使用默认人格设定喵")
 
             if not original_system_prompt:
@@ -737,6 +740,27 @@ class ContextService:
                 context_settings=context_settings,
                 unanswered_count=current_unanswered_count,
             )
+
+            # 与 AstrBot 普通对话保持一致：预设对话成对置于历史之前，
+            # 仅供本次请求使用，不写入实际聊天记录。
+            if len(begin_dialogs) % 2:
+                logger.warning(
+                    "[主动消息] 人格预设对话条数应为偶数，跳过本次预设注入。"
+                )
+                begin_dialogs = []
+            if begin_dialogs:
+                preset_history = [
+                    {
+                        "role": "user" if index % 2 == 0 else "assistant",
+                        "content": dialog,
+                        "_no_save": True,
+                    }
+                    for index, dialog in enumerate(begin_dialogs)
+                ]
+                effective_history_messages = [
+                    *preset_history,
+                    *effective_history_messages,
+                ]
 
             logger.info("[主动消息] 上下文与人格设定已准备完成喵。")
             if plugin.telemetry and plugin.telemetry.enabled:
