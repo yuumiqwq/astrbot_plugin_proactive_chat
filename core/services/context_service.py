@@ -293,6 +293,9 @@ class ContextService:
             return [], 0
 
         platform_id, raw_user_key = parsed
+        qq_records = await self.load_qq_private_history(session_id, limit)
+        if qq_records is not None:
+            return qq_records, len(qq_records)
         user_candidates = self.build_platform_history_user_candidates(raw_user_key)
         if not user_candidates:
             return [], 0
@@ -323,6 +326,58 @@ class ContextService:
                 continue
 
         return [], 0
+
+    async def load_qq_private_history(
+        self, session_id: str, limit: int
+    ) -> list[dict[str, Any]] | None:
+        """通过 OneBot 读取 QQ 私聊历史；接口不可用时回退到已收集的流水。"""
+        parts = session_id.split(":", 2)
+        if len(parts) != 3 or parts[1] != "FriendMessage":
+            return None
+        get_platform = getattr(self.plugin.context, "get_platform_inst", None)
+        if not callable(get_platform):
+            return None
+        try:
+            platform = get_platform(parts[0])
+            if platform is None or platform.meta().name != "aiocqhttp":
+                return None
+            response = await asyncio.wait_for(
+                platform.get_client().call_action(
+                    "get_friend_msg_history", user_id=int(parts[2]), count=limit
+                ),
+                timeout=15,
+            )
+            messages = response.get("messages")
+            if not isinstance(messages, list):
+                raise ValueError("QQ 历史接口未返回 messages 列表")
+            messages = sorted(messages, key=lambda item: int(item.get("time") or 0))
+            records = []
+            for message in messages[-limit:]:
+                sender = message.get("sender") or {}
+                sender_id = str(sender.get("user_id") or message.get("user_id") or "")
+                is_bot = sender_id == str(message.get("self_id") or "")
+                content = message.get("message", message.get("raw_message", ""))
+                if isinstance(content, list):
+                    content = [
+                        {**(part.get("data") or {}), "type": part.get("type", "")}
+                        for part in content
+                        if isinstance(part, dict)
+                    ]
+                records.append(
+                    {
+                        "sender_id": sender_id,
+                        "sender_name": "Bot"
+                        if is_bot
+                        else sender.get("nickname") or sender_id,
+                        "content": content,
+                    }
+                )
+            return records
+        except Exception as error:
+            logger.warning(
+                f"[主动消息] QQ 私聊历史读取失败，回退到已收集的流水：{error}"
+            )
+            return None
 
     def get_platform_record_field(
         self,
