@@ -13,7 +13,6 @@ from astrbot.api import logger
 from ...utils.time_utils import format_current_time
 from ..adapters.astrbot_conversation import load_conversation_history
 from ..domain.content_text import reduce_segment_text
-from .qq_history_service import history_as_dialogue, qq_client, read_qq_history
 
 # 群聊主动破冰的默认流水提示词模板。
 # 外部化后便于后续“多提示词模板注入”功能复用或覆盖，
@@ -214,9 +213,6 @@ class ContextService:
 
         return {
             "source_mode": source_mode,
-            "qq_native_context": self.parse_bool_setting(
-                settings.get("qq_native_context"), default=False
-            ),
             "platform_history_count": count,
             "platform_history_prompt": platform_history_prompt,
             "include_bot_messages": include_bot_messages,
@@ -605,26 +601,6 @@ class ContextService:
         settings = context_settings or self.get_context_settings(session_id)
         source_mode = settings["source_mode"]
         conversation_count = len(conversation_history)
-
-        if settings.get("qq_native_context") and source_mode in {
-            "platform_message_history",
-            "hybrid",
-        }:
-            client = qq_client(self.plugin, session_id)
-            if client is not None:
-                records = await read_qq_history(
-                    client, int(session_id.split(":", 2)[2])
-                )
-                dialogue = history_as_dialogue(
-                    records, self, settings["include_bot_messages"]
-                )
-                logger.info(
-                    f"[主动消息] QQ 分页读取 {len(records)} 条记录，"
-                    f"有效消息 {len(dialogue)} 条，使用 AstrBot 原生长度管理。"
-                )
-                if source_mode == "hybrid":
-                    dialogue = [*conversation_history, *dialogue]
-                return dialogue, ""
 
         platform_records_count = 0
         platform_injected_count = 0

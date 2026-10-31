@@ -191,22 +191,24 @@ class LlmService:
             logger.info("[主动消息] LLM 前置钩子终止了事件传播，放弃本次请求喵。")
             return None, final_user_simulation_prompt
 
-        if (session_config.get("context_settings") or {}).get("qq_native_context"):
-            from .native_context_service import manage_request, native_qq_enabled
-
-            if native_qq_enabled(session_config):
-                try:
-                    await manage_request(plugin.context, session_id, provider, req)
-                except Exception as error:
-                    logger.error(
-                        f"[主动消息] AstrBot 上下文处理失败，跳过本次请求: {error}"
-                    )
-                    return None, final_user_simulation_prompt
-
-        # 在人格、记忆与长度处理完成后添加格式协议，不写入用户提示词。
-        req.system_prompt = (
-            f"{getattr(req, 'system_prompt', '') or ''}\n\n{DECISION_INSTRUCTION}"
-        ).strip()
+        prepare_request = getattr(
+            getattr(plugin, "context", None), "prepare_session_request", None
+        )
+        if callable(prepare_request):
+            try:
+                await prepare_request(
+                    session_id, provider, req, response_instruction=DECISION_INSTRUCTION
+                )
+            except Exception as error:
+                logger.error(
+                    f"[主动消息] AstrBot 上下文处理失败，跳过本次请求: {error}"
+                )
+                return None, final_user_simulation_prompt
+        else:
+            # Compatibility with unmodified AstrBot installations.
+            req.system_prompt = (
+                f"{getattr(req, 'system_prompt', '') or ''}\n\n{DECISION_INSTRUCTION}"
+            ).strip()
 
         llm_response_obj = None
         try:

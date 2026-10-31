@@ -64,11 +64,6 @@
                         "default": "conversation_history",
                         "hint": "conversation_history：使用 AstrBot 当前的 LLM 对话历史，适合延续 Bot 与用户已有的对话语境。platform_message_history：使用平台最近的真实聊天流水，适合群聊或希望参考“最近实际聊了什么”的场景。hybrid：同时使用两者，通常能兼顾对话连续性与最近聊天内容，但也会占用更多上下文。"
                     },
-                    "qq_native_context": {
-                        "description": "QQ 历史使用 AstrBot 长度管理",
-                        "type": "bool",
-                        "default": false
-                    },
                     "platform_history_count": {
                         "description": "注入平台聊天流水条数",
                         "type": "int",
